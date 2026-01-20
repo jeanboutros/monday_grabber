@@ -1,0 +1,18 @@
+query GetBoardItems($target_board_ids: [ID!]!, $limit: Int!, $cursor: String) {
+  boards(ids: $target_board_ids) {
+    id
+    name
+    items_page(limit: $limit, cursor: $cursor) {
+      cursor
+      items {
+        id
+        name
+        column_values {
+          id
+          text
+          value
+        }
+      }
+    }
+  }
+}

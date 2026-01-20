@@ -1,0 +1,698 @@
+# Monday Grabber
+
+A Python client for the Monday.com GraphQL API with automatic pagination, comprehensive error handling, and flexible data export capabilities.
+
+## Features
+
+- **GraphQL Query Execution**: Execute queries with automatic cursor-based pagination
+- **Data Transformation**: Transform nested JSON responses using jq expressions
+- **Multiple Output Formats**: Export to CSV, JSON, or Parquet
+- **Comprehensive Error Handling**: Detailed exception hierarchy with retry support
+- **YAML Configuration**: Externalize query configurations for easy maintenance
+- **Scalable Architecture**: Clean architecture with protocol-based dependency injection
+
+## Prerequisites
+
+- Python 3.12 or higher (3.13+ recommended)
+- [uv](https://github.com/astral-sh/uv) package manager (recommended)
+- Monday.com API key
+
+## Installation with uv
+
+### 1. Install uv (if not already installed)
+
+```bash
+# macOS/Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Or with Homebrew
+brew install uv
+
+# Windows
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+### 2. Clone the repository
+
+```bash
+git clone https://github.com/yourusername/monday_grabber.git
+cd monday_grabber
+```
+
+### 3. Create virtual environment and install dependencies
+
+```bash
+# Create a virtual environment with Python 3.12+
+uv venv --python 3.13
+
+# Activate the virtual environment
+source .venv/bin/activate  # macOS/Linux
+# .venv\Scripts\activate   # Windows
+
+# Install the package in development mode
+uv pip install -e .
+```
+
+### Alternative: Installation with pip (without uv)
+
+If you prefer using standard pip instead of uv:
+
+```bash
+# Create a virtual environment using pyenv (recommended for Python 3.14)
+pyenv local 3.14
+pyenv exec python -m venv .venv
+
+# Or with system Python
+python3 -m venv .venv
+
+# Activate the virtual environment
+source .venv/bin/activate  # macOS/Linux
+# .venv\Scripts\activate   # Windows
+
+# Upgrade pip and install build tools
+pip install --upgrade pip build hatchling
+
+# Option 1: Install in development mode
+pip install -e .
+
+# Option 2: Build and install as wheel
+python -m build --wheel --outdir dist/
+pip install dist/monday_grabber-*.whl
+```
+
+### 4. Configure your API key
+
+Create a `.env` file in the project root:
+
+```bash
+# .env
+MONDAY_GRABBER__MONDAY_API_KEY=your_api_key_here
+```
+
+Or set it as an environment variable:
+
+```bash
+export MONDAY_GRABBER__MONDAY_API_KEY="your_api_key_here"
+```
+
+## Quick Start
+
+### Command Line Interface
+
+```bash
+# List available queries
+python -m monday_grabber --list-queries
+
+# List configured boards
+python -m monday_grabber --list-boards
+
+# Ingest a board using the wide format query
+python -m monday_grabber --query get_board_items_wide --boards main_board
+
+# Ingest multiple boards with JSON output
+python -m monday_grabber --query get_board_items --boards board1 board2 --format json
+
+# Enable debug logging
+python -m monday_grabber --query get_board_items_wide --boards main_board --debug
+
+# Specify custom output directory
+python -m monday_grabber --query get_board_items_wide --boards main_board --output-dir ./exports
+```
+
+### CLI Options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--query` | `-q` | Name of the query to execute |
+| `--boards` | `-b` | Board names to ingest (space-separated) |
+| `--format` | `-f` | Output format: csv, json, parquet (default: csv) |
+| `--output-dir` | `-o` | Output directory (default: ./output) |
+| `--config` | | Path to queries.yaml config file |
+| `--list-queries` | | List all available queries and exit |
+| `--list-boards` | | List all configured boards and exit |
+| `--debug` | | Enable debug logging |
+| `--quiet` | | Suppress all output except errors |
+
+### Output Files
+
+Output files are named with timestamps for traceability:
+
+```
+output/20260120T143052Z_get_board_items_wide_18310022893.csv
+```
+
+Format: `YYYYMMDDTHHMMSSZ_<query_name>_<entity_id>.<format>`
+
+## Configuration
+
+### queries.yaml
+
+The `config/queries.yaml` file defines queries, transformations, and board configurations:
+
+```yaml
+queries:
+  # Long format: each column_value becomes a row
+  get_board_items:
+    description: "Fetch all items from specified boards with pagination"
+    graphql_file: get_board_items.graphql
+    pagination:
+      enabled: true
+      cursor_path: ".boards[].items_page.cursor"
+      items_path: ".boards[].items_page.items[]"
+      cursor_variable: "cursor"
+    variables:
+      target_board_ids: []  # Override at runtime
+      limit: 500
+    table:
+      jq_transform: |
+        .boards[].items_page.items[] |
+        {item_id: .id, item_name: .name} +
+        (.column_values[] | {column_id: .id, column_text: .text})
+      output_format: csv
+      columns:
+        item_id:
+          dtype: string
+          nullable: false
+        item_name:
+          dtype: string
+          nullable: false
+        column_id:
+          dtype: string
+          nullable: false
+        column_text:
+          dtype: string
+          nullable: true
+
+  # Wide format: pivot column_values into columns
+  get_board_items_wide:
+    description: "Fetch items with column_values pivoted into columns"
+    graphql_file: get_board_items.graphql
+    pagination:
+      enabled: true
+      cursor_path: ".boards[].items_page.cursor"
+      items_path: ".boards[].items_page.items[]"
+      cursor_variable: "cursor"
+    variables:
+      target_board_ids: []
+      limit: 500
+    table:
+      jq_transform: |
+        .boards[].items_page.items[] |
+        {item_id: .id, item_name: .name} +
+        ([.column_values[] | {(.id + "__text"): .text, (.id + "__value"): .value}] | add // {})
+      output_format: csv
+      columns:
+        item_id:
+          dtype: string
+          nullable: false
+        item_name:
+          dtype: string
+          nullable: false
+
+# Board configurations
+boards:
+  main_board:
+    id: 18310022893
+    description: "Main project board"
+  
+  # Add more boards here
+  # sales_board:
+  #   id: 123456789
+  #   description: "Sales pipeline"
+
+# Default settings
+settings:
+  default_limit: 500
+  max_retries: 3
+  retry_delay_seconds: 1
+```
+
+### Adding New Entity Types
+
+The configuration structure is designed to be scalable. In the future, you can add configurations for other entity types:
+
+```yaml
+# Future: Workspace ingestion
+workspaces:
+  main_workspace:
+    id: 12345
+    description: "Main workspace"
+
+# Future: User ingestion  
+users:
+  admin_users:
+    team_ids: [100, 101]
+    description: "Admin team users"
+
+# Future: New query types
+queries:
+  get_workspace_data:
+    entity_type: workspace  # New field to distinguish entity types
+    graphql_file: get_workspace.graphql
+    # ...
+```
+
+## Python API
+
+```python
+from pathlib import Path
+from monday_grabber import (
+    MondayClient,
+    QueryExecutor,
+    QueryLoader,
+    ConfigLoader,
+    TableParser,
+    WriterFactory,
+    OutputFormat,
+)
+
+# Initialize components
+client = MondayClient(api_key="your_api_key")
+query_loader = QueryLoader(queries_dir=Path("src/monday_grabber/queries"))
+config_loader = ConfigLoader(config_path=Path("config/queries.yaml"))
+
+# Create executor with dependency injection
+executor = QueryExecutor(
+    client=client,
+    query_loader=query_loader,
+    config_loader=config_loader,
+)
+
+# Execute query with pagination
+response = executor.execute_configured(
+    query_name="get_board_items",
+    target_board_ids=[18310022893],
+)
+
+# Transform to DataFrame
+query_config = config_loader.get_query_config(name="get_board_items_wide")
+parser = TableParser(config=query_config.table)
+df = parser.parse(data=response)
+
+# Write to file
+factory = WriterFactory()
+writer = factory.create(output_format=OutputFormat.CSV)
+writer.write(df=df, path=Path("output/data"))
+```
+
+## Project Structure
+
+```
+monday_grabber/
+├── config/
+│   └── queries.yaml          # Query and board configurations
+├── src/monday_grabber/
+│   ├── __init__.py           # Package exports
+│   ├── __main__.py           # CLI entry point
+│   ├── core/                 # Core types and utilities
+│   │   ├── abc.py            # Protocol definitions (HttpClient, etc.)
+│   │   ├── exceptions.py     # Exception hierarchy
+│   │   ├── logging_config.py # Centralized logging
+│   │   └── types.py          # Pydantic models (QueryConfig, etc.)
+│   ├── client/               # HTTP transport layer
+│   │   ├── monday_client.py  # GraphQL HTTP client
+│   │   └── response_handler.py
+│   ├── config/               # Configuration loading
+│   │   └── config_loader.py  # YAML config loader
+│   ├── graphql/              # Query execution
+│   │   ├── pagination.py     # Cursor-based pagination
+│   │   ├── query_executor.py # High-level query orchestration
+│   │   ├── query_loader.py   # GraphQL file loading
+│   │   └── response_parser.py # jq-based response parsing
+│   ├── parser/               # Data transformation
+│   │   ├── table_parser.py   # jq to DataFrame conversion
+│   │   └── writers/          # Output writers
+│   │       ├── protocol.py   # DataFrameWriter protocol
+│   │       ├── csv_writer.py
+│   │       ├── json_writer.py
+│   │       ├── parquet_writer.py
+│   │       └── factory.py    # Writer factory
+│   └── queries/              # GraphQL query files
+│       ├── get_board_items.graphql
+│       └── get_board_info.graphql
+├── output/                   # Default output directory
+├── pyproject.toml
+└── README.md
+```
+
+## Error Handling
+
+The library provides a comprehensive exception hierarchy:
+
+```python
+from monday_grabber import (
+    MondayAPIException,
+    MondayClientError,
+    MondayServerError,
+)
+
+try:
+    result = executor.execute_configured(query_name="get_board_items")
+except MondayClientError as e:
+    # 4xx errors (bad request, unauthorized, rate limit, etc.)
+    print(f"Client error: {e}")
+    if e.retry_after:
+        print(f"Retry after {e.retry_after} seconds")
+except MondayServerError as e:
+    # 5xx errors (server issues)
+    print(f"Server error: {e}")
+except MondayAPIException as e:
+    # All API errors
+    print(f"API error: {e}")
+```
+
+## Logging
+
+The library uses Python's standard logging module with centralized configuration.
+All loggers are children of `PANPAN.monday_grabber`.
+
+### Configuration
+
+```python
+from monday_grabber.core import configure_logging, get_logger
+
+# Configure at application startup
+configure_logging(level="DEBUG")
+
+# Get a logger for your module (becomes PANPAN.monday_grabber.myapp.mymodule)
+logger = get_logger("myapp.mymodule")
+```
+
+### Environment Variables
+
+- `MONDAY_GRABBER__LOG_LEVEL`: Override default log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+- `MONDAY_GRABBER__LOG_FORMAT`: Override default log format string
+
+Priority: CLI arguments > Environment variables > Defaults
+
+Log levels:
+- **DEBUG**: Detailed information (function internals, data values)
+- **INFO**: Confirmation that things work (function entry/exit)
+- **WARNING**: Unexpected but non-critical issues
+- **ERROR**: Serious problems that prevented completion
+
+## Development
+
+### Running Tests
+
+```bash
+# Install dev dependencies
+uv pip install -e ".[dev]"
+
+# Run tests
+pytest tests/
+```
+
+### Code Quality
+
+```bash
+# Format code
+ruff format src/ tests/
+
+# Lint
+ruff check src/ tests/
+
+# Type check
+mypy src/
+```
+
+## Docker
+
+The project includes a minimal Docker image based on Python 3.14-slim. The image is built using a multi-stage process to keep it as small as possible.
+
+### Building the Image
+
+```bash
+# Build with Docker
+docker build -t monday-grabber:latest .
+
+# Or with Podman (macOS alternative)
+podman build -t monday-grabber:latest .
+```
+
+### Running the Container
+
+```bash
+# Show help
+docker run --rm monday-grabber:latest
+
+# List available queries
+docker run --rm \
+  -e MONDAY_GRABBER__MONDAY_API_KEY=your_api_key \
+  monday-grabber:latest \
+  --list-queries
+
+# Ingest a board and save output to local directory
+docker run --rm \
+  -e MONDAY_GRABBER__MONDAY_API_KEY=your_api_key \
+  -v $(pwd)/output:/app/output \
+  monday-grabber:latest \
+  --query get_board_items_wide --boards main_board --format csv
+
+# With debug logging
+docker run --rm \
+  -e MONDAY_GRABBER__MONDAY_API_KEY=your_api_key \
+  -e MONDAY_GRABBER__LOG_LEVEL=DEBUG \
+  -v $(pwd)/output:/app/output \
+  monday-grabber:latest \
+  --query get_board_items_wide --boards main_board
+```
+
+### macOS Container Alternatives
+
+On macOS, you can use the container app:
+
+
+### Building the Image
+
+```bash
+# Build with container
+container build -t monday-grabber:latest .
+```
+
+### Running the Container
+
+```bash
+# Show help
+container run --rm monday-grabber:latest
+
+# List available queries
+container run --rm \
+  -e MONDAY_GRABBER__MONDAY_API_KEY=your_api_key \
+  monday-grabber:latest \
+  --list-queries
+
+# Ingest a board and save output to local directory
+container run --rm \
+  -e MONDAY_GRABBER__MONDAY_API_KEY=your_api_key \
+  -v $(pwd)/output:/app/output \
+  monday-grabber:latest \
+  --query get_board_items_wide --boards main_board --format csv
+
+# With debug logging
+container run --rm \
+  -e MONDAY_GRABBER__MONDAY_API_KEY=your_api_key \
+  -e MONDAY_GRABBER__LOG_LEVEL=DEBUG \
+  -v $(pwd)/output:/app/output \
+  monday-grabber:latest \
+  --query get_board_items_wide --boards main_board
+```
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MONDAY_GRABBER__MONDAY_API_KEY` | Monday.com API key (required) | - |
+| `MONDAY_GRABBER__LOG_LEVEL` | Logging level | INFO |
+| `MONDAY_GRABBER__LOG_FORMAT` | Custom log format | - |
+| `MONDAY_GRABBER__CONFIG_PATH` | Path to queries.yaml config | /app/config/queries.yaml |
+| `MONDAY_GRABBER__OUTPUT_DIR` | Output directory | /app/output |
+
+### Custom Configuration
+
+To use a custom `queries.yaml`:
+
+```bash
+docker run --rm \
+  -e MONDAY_GRABBER__MONDAY_API_KEY=your_api_key \
+  -v $(pwd)/output:/app/output \
+  -v $(pwd)/my-config:/app/config:ro \
+  monday-grabber:latest \
+  --query my_custom_query --boards my_board
+```
+
+## Kubernetes
+
+Deploy monday-grabber as a Kubernetes CronJob to run scheduled data ingestion.
+
+### Kubernetes Secret for API Key
+
+```yaml
+# kubernetes/secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: monday-grabber-secret
+  namespace: default
+type: Opaque
+stringData:
+  MONDAY_API_KEY: "your_monday_api_key_here"
+```
+
+Apply the secret:
+
+```bash
+kubectl apply -f kubernetes/secret.yaml
+```
+
+### CronJob for Hourly Ingestion
+
+```yaml
+# kubernetes/cronjob.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: monday-grabber
+  namespace: default
+spec:
+  # Run every hour at minute 0
+  schedule: "0 * * * *"
+  # Keep last 3 successful and 1 failed jobs
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  # Don't run if previous job is still running
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      # Automatically clean up completed pods after 1 hour
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            app: monday-grabber
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: monday-grabber
+              image: monday-grabber:latest
+              imagePullPolicy: Always
+              args:
+                - "--query"
+                - "get_board_items_wide"
+                - "--boards"
+                - "main_board"
+                - "--format"
+                - "parquet"
+              env:
+                - name: MONDAY_GRABBER__MONDAY_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: monday-grabber-secret
+                      key: MONDAY_API_KEY
+                - name: MONDAY_GRABBER__LOG_LEVEL
+                  value: "INFO"
+              resources:
+                requests:
+                  memory: "128Mi"
+                  cpu: "100m"
+                limits:
+                  memory: "512Mi"
+                  cpu: "500m"
+              volumeMounts:
+                - name: output
+                  mountPath: /app/output
+          volumes:
+            - name: output
+              persistentVolumeClaim:
+                claimName: monday-grabber-output
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: monday-grabber-output
+  namespace: default
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+```
+
+Apply the CronJob:
+
+```bash
+kubectl apply -f kubernetes/cronjob.yaml
+```
+
+### Useful kubectl Commands
+
+```bash
+# Watch CronJob status
+kubectl get cronjob monday-grabber -w
+
+# List all jobs created by the CronJob
+kubectl get jobs -l app=monday-grabber
+
+# View logs from the most recent job
+kubectl logs -l app=monday-grabber --tail=100
+
+# Manually trigger a job run
+kubectl create job monday-grabber-manual --from=cronjob/monday-grabber
+
+# Delete a CronJob
+kubectl delete cronjob monday-grabber
+```
+
+### Alternative: Run-Once Job
+
+For a one-time ingestion (e.g., backfill):
+
+```yaml
+# kubernetes/job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: monday-grabber-onetime
+  namespace: default
+spec:
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: monday-grabber
+          image: monday-grabber:latest
+          args:
+            - "--query"
+            - "get_board_items_wide"
+            - "--boards"
+            - "main_board"
+            - "--format"
+            - "csv"
+            - "--debug"
+          env:
+            - name: MONDAY_GRABBER__MONDAY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: monday-grabber-secret
+                  key: MONDAY_API_KEY
+```
+
+### Helm Chart (Optional)
+
+For more complex deployments, consider creating a Helm chart. The basic structure:
+
+```
+charts/monday-grabber/
+├── Chart.yaml
+├── values.yaml
+├── templates/
+│   ├── cronjob.yaml
+│   ├── secret.yaml
+│   └── pvc.yaml
+```
+
+## License
+
+MIT License - see LICENSE file for details.

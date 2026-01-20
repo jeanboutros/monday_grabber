@@ -1,0 +1,60 @@
+# Docker ignore file - exclude files not needed in container
+
+# Version control
+.git/
+.gitignore
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+*.egg
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Documentation
+docs/_build/
+*.md
+!README.md
+
+# Output (will be mounted as volume)
+output/
+*.csv
+*.json
+*.parquet
+
+# macOS
+.DS_Store
+
+# Development files
+tests/
+examples/
+*.lock
+
+# Temporary files
+*.tmp
+*.temp
+*.log

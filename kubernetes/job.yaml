@@ -1,0 +1,74 @@
+# Monday Grabber - One-time Kubernetes Job
+# =========================================
+# Run a single data ingestion (useful for backfills or testing).
+#
+# Prerequisites:
+#   1. Apply the secret: kubectl apply -f secret.yaml
+#
+# Usage:
+#   kubectl apply -f job.yaml
+#   kubectl logs -f job/monday-grabber-onetime
+#   kubectl delete job monday-grabber-onetime
+# =========================================
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: monday-grabber-onetime
+  namespace: default
+  labels:
+    app: monday-grabber
+spec:
+  # Automatically delete job after 10 minutes
+  ttlSecondsAfterFinished: 600
+
+  # Don't retry on failure
+  backoffLimit: 0
+
+  template:
+    metadata:
+      labels:
+        app: monday-grabber
+    spec:
+      restartPolicy: Never
+
+      containers:
+        - name: monday-grabber
+          image: monday-grabber:latest
+          imagePullPolicy: Always
+
+          # CLI arguments - enable debug for one-time runs
+          args:
+            - "--query"
+            - "get_board_items_wide"
+            - "--boards"
+            - "main_board"
+            - "--format"
+            - "csv"
+            - "--debug"
+
+          env:
+            - name: MONDAY_GRABBER__MONDAY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: monday-grabber-secret
+                  key: MONDAY_API_KEY
+
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+
+          volumeMounts:
+            - name: output
+              mountPath: /app/output
+
+      volumes:
+        - name: output
+          emptyDir: {}
+          # Or use PVC for persistent storage:
+          # persistentVolumeClaim:
+          #   claimName: monday-grabber-output

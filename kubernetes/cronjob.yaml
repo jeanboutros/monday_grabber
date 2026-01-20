@@ -1,0 +1,133 @@
+# Monday Grabber - Kubernetes CronJob
+# ====================================
+# Runs the data ingestion on a schedule (default: every hour).
+#
+# Prerequisites:
+#   1. Apply the secret: kubectl apply -f secret.yaml
+#   2. Build and push the Docker image to your registry
+#   3. Update the image reference below
+#
+# Usage:
+#   kubectl apply -f cronjob.yaml
+#
+# Useful commands:
+#   kubectl get cronjob monday-grabber -w
+#   kubectl logs -l app=monday-grabber --tail=100
+#   kubectl create job monday-grabber-manual --from=cronjob/monday-grabber
+# ====================================
+
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: monday-grabber
+  namespace: default
+  labels:
+    app: monday-grabber
+spec:
+  # Schedule: Every hour at minute 0
+  # Cron format: minute hour day-of-month month day-of-week
+  # Examples:
+  #   "0 * * * *"     - Every hour
+  #   "*/15 * * * *"  - Every 15 minutes
+  #   "0 6 * * *"     - Daily at 6:00 AM
+  #   "0 6 * * 1-5"   - Weekdays at 6:00 AM
+  schedule: "0 * * * *"
+
+  # Keep last 3 successful and 1 failed jobs for debugging
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+
+  # Forbid: Don't start new job if previous is still running
+  # Allow: Start new job even if previous is running
+  # Replace: Kill previous job and start new one
+  concurrencyPolicy: Forbid
+
+  # Suspend the CronJob (set to true to pause scheduling)
+  suspend: false
+
+  jobTemplate:
+    spec:
+      # Automatically clean up completed pods after 1 hour
+      ttlSecondsAfterFinished: 3600
+
+      # Retry failed jobs up to 3 times
+      backoffLimit: 3
+
+      template:
+        metadata:
+          labels:
+            app: monday-grabber
+        spec:
+          # OnFailure: Restart container on failure
+          # Never: Don't restart, let backoffLimit handle retries
+          restartPolicy: OnFailure
+
+          # Optional: Add node affinity, tolerations, etc.
+          # nodeSelector:
+          #   workload: batch
+
+          containers:
+            - name: monday-grabber
+              # Update this to your container registry
+              image: monday-grabber:latest
+              imagePullPolicy: Always
+
+              # CLI arguments
+              args:
+                - "--query"
+                - "get_board_items_wide"
+                - "--boards"
+                - "main_board"
+                - "--format"
+                - "parquet"
+                # Uncomment for debug logging:
+                # - "--debug"
+
+              env:
+                # API key from secret
+                - name: MONDAY_GRABBER__MONDAY_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: monday-grabber-secret
+                      key: MONDAY_API_KEY
+
+                # Log level (DEBUG, INFO, WARNING, ERROR)
+                - name: MONDAY_GRABBER__LOG_LEVEL
+                  value: "INFO"
+
+              # Resource limits and requests
+              resources:
+                requests:
+                  memory: "128Mi"
+                  cpu: "100m"
+                limits:
+                  memory: "512Mi"
+                  cpu: "500m"
+
+              # Mount output volume
+              volumeMounts:
+                - name: output
+                  mountPath: /app/output
+
+          volumes:
+            - name: output
+              persistentVolumeClaim:
+                claimName: monday-grabber-output
+
+---
+# Persistent Volume Claim for output data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: monday-grabber-output
+  namespace: default
+  labels:
+    app: monday-grabber
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  # Uncomment to specify a storage class:
+  # storageClassName: standard

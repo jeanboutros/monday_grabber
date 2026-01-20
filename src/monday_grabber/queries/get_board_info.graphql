@@ -1,0 +1,20 @@
+query GetBoardInfo($board_ids: [ID!]!) {
+  boards(ids: $board_ids) {
+    id
+    name
+    description
+    state
+    board_kind
+    columns {
+      id
+      title
+      type
+      settings_str
+    }
+    groups {
+      id
+      title
+      color
+    }
+  }
+}

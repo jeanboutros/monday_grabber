@@ -1,0 +1,137 @@
+# Configuration for GraphQL queries
+# Each query has its own settings and default variables
+# Use jq_transform to flatten and reshape the response data
+
+queries:
+  get_board_items:
+    description: "Fetch all items from specified boards with pagination"
+    graphql_file: get_board_items.graphql
+    pagination:
+      enabled: true
+      cursor_path: ".boards[].items_page.cursor"
+      items_path: ".boards[].items_page.items[]"
+      cursor_variable: "cursor"
+    variables:
+      target_board_ids: []  # Override at runtime
+      limit: 500
+    table:
+      # jq expression: explode items and their column_values into rows
+      jq_transform: |
+        .boards[].items_page.items[] |
+        {item_id: .id, item_name: .name, created_at: .created_at, updated_at: .updated_at} +
+        (.column_values[] | {column_id: .id, column_text: .text, column_value: .value})
+      output_format: csv
+      output_path: "output/board_items"
+      columns:
+        item_id:
+          dtype: string
+          nullable: false
+        item_name:
+          dtype: string
+          nullable: false
+        column_id:
+          dtype: string
+          nullable: false
+        column_text:
+          dtype: string
+          nullable: true
+        column_value:
+          dtype: json
+          nullable: true
+        created_at:
+          dtype: datetime
+          datetime_format: "%Y-%m-%dT%H:%M:%SZ"
+          nullable: true
+        updated_at:
+          dtype: datetime
+          nullable: true
+
+  get_board_info:
+    description: "Get board metadata and column definitions"
+    graphql_file: get_board_info.graphql
+    pagination:
+      enabled: false
+    variables:
+      board_ids: []  # Override at runtime
+    table:
+      jq_transform: |
+        .boards[] |
+        {board_id: .id, name: .name, description: .description, state: .state, board_kind: .board_kind, columns: .columns, groups: .groups}
+      output_format: json
+      output_path: "output/board_info"
+      columns:
+        board_id:
+          dtype: string
+          nullable: false
+        name:
+          dtype: string
+          nullable: false
+        description:
+          dtype: string
+          nullable: true
+        state:
+          dtype: string
+          nullable: false
+        board_kind:
+          dtype: string
+          nullable: false
+        columns:
+          dtype: json
+          nullable: true
+        groups:
+          dtype: json
+          nullable: true
+
+  get_board_items_wide:
+    description: "Fetch items with column_values pivoted into columns (wide format)"
+    graphql_file: get_board_items.graphql
+    pagination:
+      enabled: true
+      cursor_path: ".boards[].items_page.cursor"
+      items_path: ".boards[].items_page.items[]"
+      cursor_variable: "cursor"
+    variables:
+      target_board_ids: []
+      limit: 500
+    table:
+      # Pivot column_values into columns using .id (always exists, never null)
+      # Creates {id}__text and {id}__value for each column
+      jq_transform: |
+        .boards[].items_page.items[] |
+        {item_id: .id, item_name: .name, created_at: .created_at, updated_at: .updated_at} +
+        ([.column_values[] | {(.id + "__text"): .text, (.id + "__value"): .value}] | add // {})
+      output_format: csv
+      output_path: "output/board_items_wide"
+      # Base columns - dynamic columns from column_values will be auto-detected
+      columns:
+        item_id:
+          dtype: string
+          nullable: false
+        item_name:
+          dtype: string
+          nullable: false
+        created_at:
+          dtype: datetime
+          nullable: true
+        updated_at:
+          dtype: datetime
+          nullable: true
+        # Dynamic columns will be added automatically, e.g.:
+        # status_mkm0zqvb__text:
+        #   dtype: string
+        #   nullable: true
+        # status_mkm0zqvb__value:
+        #   dtype: json
+        #   nullable: true
+
+# Default settings
+settings:
+  default_limit: 500
+  max_retries: 3
+  retry_delay_seconds: 1
+
+# Board configurations (can be overridden by environment variables)
+boards:
+  main_board:
+    id: 18310022893
+    description: "Main project board"
