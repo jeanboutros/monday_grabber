@@ -26,8 +26,8 @@ FROM python:3.14-slim AS builder
 # ---------------------------------------------------------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    libjq-dev \
-    libonig-dev \
+    # libjq-dev \
+    # libonig-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -63,11 +63,11 @@ RUN groupadd --gid 1000 grabber \
 # ---------------------------------------------------------------------------
 # Only install libraries needed at runtime (not build tools)
 # ---------------------------------------------------------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libjq1 \
-    libonig5 \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+# RUN apt-get update && apt-get install -y --no-install-recommends \
+    # libjq1 \
+    # libonig5 \
+    # && rm -rf /var/lib/apt/lists/* \
+    # && apt-get clean
 
 WORKDIR /app
 
